@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aule Libere UniPD</title>
+  <style>
+    :root {
+      --bg: #090c15;
+      --card: rgba(20, 26, 43, 0.72);
+      --card-solid: #141a2b;
+      --border: rgba(148, 163, 184, 0.16);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #8b5cf6;
+      --accent-2: #e11d48;
+      --free: #10b981;
+      --free-bg: rgba(16, 185, 129, 0.14);
+      --busy: rgba(148, 163, 184, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 10%, rgba(139, 92, 246, 0.18), transparent 38%),
+        radial-gradient(circle at 88% 15%, rgba(225, 29, 72, 0.14), transparent 36%),
+        var(--bg);
+      padding: 24px 16px 64px;
+    }
+
+    .container {
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(90deg, #f8fafc, #c4b5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .badge-status {
+      font-size: 0.78rem;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--free);
+      box-shadow: 0 0 8px var(--free);
+    }
+
+    .dot.loading { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+    .dot.error { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      margin-bottom: 20px;
+    }
+
+    .filters-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      align-items: end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    input, select, button {
+      font-family: inherit;
+      font-size: 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(9, 12, 21, 0.75);
+      color: var(--text);
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--accent);
+    }
+
+    .date-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .date-row input { flex: 1; min-width: 0; }
+
+    .btn-chip {
+      padding: 8px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      background: rgba(139, 92, 246, 0.14);
+      border-color: rgba(139, 92, 246, 0.35);
+      color: #ddd6fe;
+      white-space: nowrap;
+    }
+
+    .btn-chip:hover { background: rgba(139, 92, 246, 0.28); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #6d28d9);
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 10px 16px;
+      color: #fff;
+    }
+
+    .btn-primary:hover { filter: brightness(1.1); }
+
+    .secondary-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+
+    .toggle-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-label input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .progress-wrap {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 18px;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.2s ease;
+    }
+
+    .building-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+      backdrop-filter: blur(12px);
+    }
+
+    .building-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .building-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+
+    .count-pill {
+      font-size: 0.78rem;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--free-bg);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      white-space: nowrap;
+    }
+
+    .room-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 240px) 1fr;
+      gap: 14px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(9, 12, 21, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.08);
+      margin-bottom: 8px;
+    }
+
+    .room-row:last-child { margin-bottom: 0; }
+
+    @media (max-width: 720px) {
+      .room-row { grid-template-columns: 1fr; gap: 8px; }
+    }
+
+    .room-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .room-meta {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .now-badge {
+      display: inline-block;
+      margin-top: 5px;
+      font-size: 0.73rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--free-bg);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.28);
+    }
+
+    .slots-area {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .timeline {
+      position: relative;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--busy);
+      overflow: hidden;
+    }
+
+    .timeline-free {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: linear-gradient(90deg, #10b981, #34d399);
+      border-radius: 4px;
+    }
+
+    .timeline-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-top: -4px;
+    }
+
+    .chips-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .slot-chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      padding: 4px 9px;
+      border-radius: 7px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      color: #a7f3d0;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 42px 20px;
+      color: var(--muted);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .alert-box {
+      background: rgba(225, 29, 72, 0.12);
+      border: 1px solid rgba(225, 29, 72, 0.35);
+      color: #fecdd3;
+      padding: 14px 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      font-size: 0.86rem;
+      line-height: 1.45;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Aule Libere UniPD</h1>
+        <div class="subtitle">Finestre libere durante la giornata divise per edificio • Agenda Studenti EasyStaff</div>
+      </div>
+      <div class="badge-status">
+        <span id="status-dot" class="dot loading"></span>
+        <span id="status-text">Connessione a UniPD...</span>
+      </div>
+    </header>
+
+    <div id="alert-box" class="alert-box"></div>
+
+    <section class="panel">
+      <div class="filters-grid">
+        <div class="field">
+          <label for="f-date">Giorno</label>
+          <div class="date-row">
+            <input id="f-date" type="date" />
+            <button type="button" class="btn-chip" id="btn-today">Oggi</button>
+            <button type="button" class="btn-chip" id="btn-tomorrow">Domani</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="f-building">Edificio / Sede</label>
+          <select id="f-building">
+            <option value="__ALL__">Caricamento edifici...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="f-search">Cerca aula o edificio</label>
+          <input id="f-search" type="text" placeholder="Es. Paolotti, Fisica, Aula A..." />
+        </div>
+
+        <div class="field">
+          <label for="f-mingap">Durata minima slot</label>
+          <select id="f-mingap">
+            <option value="15">Almeno 15 min</option>
+            <option value="30" selected>Almeno 30 min</option>
+            <option value="60">Almeno 1 ora</option>
+            <option value="90">Almeno 1 ora e 30</option>
+            <option value="120">Almeno 2 ore</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="secondary-bar">
+        <div class="toggle-group">
+          <label class="checkbox-label">
+            <input id="f-only-time" type="checkbox" />
+            <span>Solo libere alle:</span>
+          </label>
+          <input id="f-time" type="time" style="padding: 5px 9px; font-size: 0.84rem;" />
+        </div>
+
+        <div class="toggle-group">
+          <label for="f-mode" style="color: var(--muted); font-size: 0.8rem;">Connessione:</label>
+          <select id="f-mode" style="padding: 5px 9px; font-size: 0.82rem;">
+            <option value="auto" selected>Auto (Diretto → Proxy)</option>
+            <option value="direct">Solo Diretto</option>
+            <option value="proxy">Proxy CORS</option>
+          </select>
+          <button type="button" class="btn-primary" id="btn-reload">Aggiorna dati</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="progress-wrap" class="progress-wrap">
+      <div id="progress-bar" class="progress-bar"></div>
+    </div>
+
+    <main id="results"></main>
+  </div>
+
+  <script>
+    const BASE_URL = 'https://agendastudentiunipd.easystaff.it';
+    const DAY_START = 8 * 60;       // 08:00
+    const DAY_END = 19 * 60 + 30;   // 19:30
+
+    const state = {
+      buildings: [],
+      baseFields: {},
+      dateFieldName: 'date',
+      buildingFieldName: 'sede',
+      loadedData: [],
+      activeTransport: 'direct'
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
+    const toIsoDate = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const toItDate = (iso) => {
+      const [y, m, d] = iso.split('-');
+      return `${d}-${m}-${y}`;
+    };
+
+    const toMin = (t) => {
+      if (typeof t === 'number') return t;
+      const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
+      return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+    };
+
+    const fromMin = (m) =>
+      `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+    const setStatus = (type, text) => {
+      $('status-dot').className = `dot ${type}`;
+      $('status-text').textContent = text;
+    };
+
+    const showAlert = (html) => {
+      const box = $('alert-box');
+      if (!html) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+      } else {
+        box.style.display = 'block';
+        box.innerHTML = html;
+      }
+    };
+
+    // Fetch intelligente con fallback automatico su proxy CORS se aperto come file locale
+    async function smartFetch(pathAndQuery, options = {}) {
+      const mode = $('f-mode').value;
+      const targetUrl = `${BASE_URL}${pathAndQuery}`;
+
+      const tryDirect = async () => {
+        const res = await fetch(targetUrl, options);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        state.activeTransport = 'direct';
+        return await res.text();
+      };
+
+      const tryProxy = async () => {
+        // Se c'è un body POST, lo accodiamo anche in query string per compatibilità con proxy GET/POST
+        let fullUrl = targetUrl;
+        if (options.body) {
+          const sep = fullUrl.includes('?') ? '&' : '?';
+          fullUrl += sep + options.body;
+        }
+        const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(fullUrl)}`;
+        const res = await fetch(proxyUrl, {
+          method: options.method || 'GET',
+          headers: options.headers || {},
+          body: options.method === 'POST' ? options.body : undefined
+        });
+        if (!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
+        state.activeTransport = 'proxy';
+        return await res.text();
+      };
+
+      if (mode === 'direct') return await tryDirect();
+      if (mode === 'proxy') return await tryProxy();
+
+      try {
+        return await tryDirect();
+      } catch (_) {
+        return await tryProxy();
+      }
+    }
+
+    function computeFreeSlots(busyIntervals, minGap) {
+      const clamped = busyIntervals
+        .map(([s, e]) => [Math.max(DAY_START, s), Math.min(DAY_END, e)])
+        .filter(([s, e]) => e > s)
+        .sort((a, b) => a[0] - b[0]);
+
+      const merged = [];
+      for (const cur of clamped) {
+        if (!merged.length || cur[0] > merged[merged.length - 1][1]) {
+          merged.push([...cur]);
+        } else {
+          merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], cur[1]);
+        }
+      }
+
+      const free = [];
+      let cursor = DAY_START;
+      for (const [s, e] of merged) {
+        if (s - cursor >= minGap) free.push([cursor, s]);
+        cursor = Math.max(cursor, e);
+      }
+      if (DAY_END - cursor >= minGap) free.push([cursor, DAY_END]);
+      return free;
+    }
+
+    async function initMetadata() {
+      setStatus('loading', 'Recupero elenco edifici UniPD...');
+      showAlert(null);
+
+      try {
+        const html = await smartFetch('/?view=rooms&include=rooms&_lang=it');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const selects = Array.from(doc.querySelectorAll('form select'));
+        const buildingSelect = selects.sort((a, b) => b.options.length - a.options.length)[0];
+
+        if (!buildingSelect) {
+          throw new Error('Struttura pagina EasyStaff non riconosciuta.');
+        }
+
+        const form = buildingSelect.closest('form');
+        const baseFields = {};
+        form.querySelectorAll('input[name], select[name]').forEach((el) => {
+          if (el.name && el.type !== 'submit' && el.type !== 'button') {
+            baseFields[el.name] = el.value;
+          }
+        });
+
+        state.baseFields = baseFields;
+        state.dateFieldName = Object.keys(baseFields).find((k) => /date|data/i.test(k)) || 'date';
+        state.buildingFieldName = buildingSelect.name || 'sede';
+
+        state.buildings = Array.from(buildingSelect.options)
+          .filter((o) => o.value && !/^(all|tutte|tutti|seleziona|-1|0)$/i.test(o.value.trim()))
+          .map((o) => ({ id: o.value, name: o.textContent.trim() }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+
+        const sel = $('f-building');
+        sel.innerHTML = `<option value="__ALL__">Tutti gli edifici (${state.buildings.length})</option>` +
+          state.buildings.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
+
+        return true;
+      } catch (err) {
+        setStatus('error', 'Errore di connessione');
+        showAlert(`
+          <strong>Impossibile contattare Agenda Studenti UniPD (${esc(err.message)}).</strong><br>
+          Se stai aprendo il file direttamente da disco (<code>file://</code>), il browser potrebbe bloccare le richieste esterne per policy CORS.
+          Prova a cambiare il selettore <em>Connessione</em> su <strong>Proxy CORS</strong> oppure avvia un server locale nella cartella del file con <code>python3 -m http.server 8000</code>.
+        `);
+        return false;
+      }
+    }
+
+    async function fetchBuildingSchedule(building, itDate) {
+      const params = new URLSearchParams({
+        ...state.baseFields,
+        view: 'rooms',
+        include: 'rooms',
+        _lang: 'it',
+        [state.buildingFieldName]: building.id,
+        [state.dateFieldName]: itDate
+      });
+
+      const rawText = await smartFetch('/grid_call.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: params.toString()
+      });
+
+      const data = JSON.parse(rawText);
+      const rawRooms = Array.isArray(data.aule)
+        ? data.aule
+        : Object.values(data.aule || data.rows || {});
+      const cells = Array.isArray(data.celle) ? data.celle : [];
+
+      const rooms = rawRooms.map((r) => {
+        const code = String(r.codice ?? r.id ?? r.codice_aula ?? r.nome ?? '');
+        const name = String(r.nome ?? r.label ?? r.descrizione ?? code);
+        const cap = r.capienza ?? r.posti ?? null;
+
+        const busy = cells
+          .filter((c) => {
+            const cRoom = String(c.codice_aula ?? c.aula ?? c.id_aula ?? c.room ?? '');
+            return cRoom === code || cRoom === name;
+          })
+          .map((c) => [
+            toMin(c.ora_inizio ?? c.start ?? c.from),
+            toMin(c.ora_fine ?? c.end ?? c.to)
+          ])
+          .filter(([s, e]) => s !== null && e !== null);
+
+        return { code, name, cap, busy };
+      });
+
+      return { ...building, rooms };
+    }
+
+    async function loadSchedule() {
+      if (!state.buildings.length) {
+        const ok = await initMetadata();
+        if (!ok) return;
+      }
+
+      const isoDate = $('f-date').value;
+      const itDate = toItDate(isoDate);
+      const selectedId = $('f-building').value;
+      const targets = selectedId === '__ALL__'
+        ? state.buildings
+        : state.buildings.filter((b) => b.id === selectedId);
+
+      state.loadedData = [];
+      $('results').innerHTML = '';
+
+      const pWrap = $('progress-wrap');
+      const pBar = $('progress-bar');
+      pWrap.style.display = 'block';
+      pBar.style.width = '5%';
+
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+        const chunk = targets.slice(i, i + BATCH_SIZE);
+        setStatus('loading', `Analisi edifici: ${Math.min(i + BATCH_SIZE, targets.length)} / ${targets.length}...`);
+
+        const results = await Promise.all(
+          chunk.map((b) => fetchBuildingSchedule(b, itDate).catch(() => ({ ...b, rooms: [] })))
+        );
+
+        state.loadedData.push(...results);
+        pBar.style.width = `${Math.round(((i + chunk.length) / targets.length) * 100)}%`;
+        render();
+      }
+
+      setTimeout(() => { pWrap.style.display = 'none'; }, 300);
+      const modeLabel = state.activeTransport === 'proxy' ? 'via Proxy' : 'diretto';
+      setStatus('', `Aggiornato (${itDate} • ${modeLabel})`);
+      render();
+    }
+
+    function render() {
+      const query = $('f-search').value.trim().toLowerCase();
+      const minGap = parseInt($('f-mingap').value, 10) || 30;
+      const onlyAtTime = $('f-only-time').checked;
+      const targetMin = toMin($('f-time').value);
+      const totalSpan = DAY_END - DAY_START;
+
+      const filteredBuildings = state.loadedData
+        .map((b) => {
+          const buildingMatch = !query || b.name.toLowerCase().includes(query);
+          const freeRooms = b.rooms
+            .map((r) => {
+              const slots = computeFreeSlots(r.busy, minGap);
+              const activeSlot = targetMin !== null
+                ? slots.find(([s, e]) => targetMin >= s && targetMin < e)
+                : null;
+              return { ...r, slots, activeSlot };
+            })
+            .filter((r) => {
+              if (!r.slots.length) return false;
+              if (onlyAtTime && !r.activeSlot) return false;
+              if (!buildingMatch && !r.name.toLowerCase().includes(query)) return false;
+              return true;
+            });
+
+          return { ...b, freeRooms };
+        })
+        .filter((b) => b.freeRooms.length > 0);
+
+      if (!filteredBuildings.length) {
+        $('results').innerHTML = `
+          <div class="empty-state">
+            Nessuna aula libera trovata per i filtri impostati.<br>
+            <span style="font-size:0.82rem;">Prova a ridurre la durata minima o a deselezionare il filtro sull'orario singolo.</span>
+          </div>`;
+        return;
+      }
+
+      $('results').innerHTML = filteredBuildings.map((b) => `
+        <section class="building-card">
+          <div class="building-header">
+            <div class="building-title">${esc(b.name)}</div>
+            <div class="count-pill">${b.freeRooms.length} ${b.freeRooms.length === 1 ? 'aula libera' : 'aule libere'}</div>
+          </div>
+
+          ${b.freeRooms.map((r) => `
+            <div class="room-row">
+              <div>
+                <div class="room-name">${esc(r.name)}</div>
+                ${r.cap ? `<div class="room-meta">Capienza: ${esc(r.cap)} posti</div>` : ''}
+                ${r.activeSlot ? `<div class="now-badge">Libera fino alle ${fromMin(r.activeSlot[1])}</div>` : ''}
+              </div>
+
+              <div class="slots-area">
+                <div class="timeline" title="Barra giornata 08:00 – 19:30 (verde = libera)">
+                  ${r.slots.map(([s, e]) => {
+                    const left = ((s - DAY_START) / totalSpan) * 100;
+                    const width = ((e - s) / totalSpan) * 100;
+                    return `<div class="timeline-free" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;"></div>`;
+                  }).join('')}
+                </div>
+                <div class="timeline-labels">
+                  <span>08:00</span>
+                  <span>11:00</span>
+                  <span>14:00</span>
+                  <span>17:00</span>
+                  <span>19:30</span>
+                </div>
+                <div class="chips-wrap">
+                  ${r.slots.map(([s, e]) => `<span class="slot-chip">${fromMin(s)} – ${fromMin(e)}</span>`).join('')}
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </section>
+      `).join('');
+    }
+
+    // Inizializzazione controlli
+    const now = new Date();
+    $('f-date').value = toIsoDate(now);
+    $('f-time').value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    $('btn-today').onclick = () => {
+      $('f-date').value = toIsoDate(new Date());
+      loadSchedule();
+    };
+
+    $('btn-tomorrow').onclick = () => {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      $('f-date').value = toIsoDate(t);
+      loadSchedule();
+    };
+
+    $('f-date').onchange = loadSchedule;
+    $('f-building').onchange = loadSchedule;
+    $('f-mode').onchange = () => { state.buildings = []; loadSchedule(); };
+    $('btn-reload').onclick = loadSchedule;
+
+    $('f-search').oninput = render;
+    $('f-mingap').onchange = render;
+    $('f-only-time').onchange = render;
+    $('f-time').oninput = () => {
+      if ($('f-only-time').checked) render();
+    };
+
+    loadSchedule();
+  </script>
+</body>
+</html>
