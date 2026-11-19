@@ -434,7 +434,6 @@
 
   <script>
     // =========================================================================
-    // INCOLLA QUI L'URL DEL TUO CLOUDFLARE WORKER (es. https://proxypd.xxx.workers.dev)
     const WORKER_URL = 'https://proxypd.zennaro-myco.workers.dev/';
     // =========================================================================
 
@@ -447,6 +446,7 @@
       baseFields: {},
       dateFieldName: 'date',
       buildingFieldName: 'sede',
+      directAllMode: false,
       loadedData: []
     };
 
@@ -465,8 +465,15 @@
     };
 
     const toMin = (t) => {
-      if (typeof t === 'number') return t;
-      const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
+      if (t === null || t === undefined || t === '') return null;
+      if (typeof t === 'number') {
+        if (t > 100000) {
+          const dt = new Date(t < 1e12 ? t * 1000 : t);
+          return dt.getHours() * 60 + dt.getMinutes();
+        }
+        return t;
+      }
+      const m = String(t).match(/(\d{1,2}):(\d{2})/);
       return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
     };
 
@@ -535,45 +542,194 @@
       return free;
     }
 
+    function parseEasyStaffGrid(rawText, fallbackBuilding) {
+      const data = JSON.parse(rawText);
+      const rawRooms = Array.isArray(data.aule)
+        ? data.aule
+        : Array.isArray(data.rooms)
+          ? data.rooms
+          : Object.values(data.aule || data.rows || data.rooms || {});
+      const cells = Array.isArray(data.celle)
+        ? data.celle
+        : Array.isArray(data.events)
+          ? data.events
+          : [];
+
+      const extractInterval = (c) => [
+        toMin(c.ora_inizio ?? c.start ?? c.from ?? c.inizio),
+        toMin(c.ora_fine ?? c.end ?? c.to ?? c.fine)
+      ];
+
+      return rawRooms.map((r) => {
+        const code = String(r.codice ?? r.id ?? r.codice_aula ?? r.id_aula ?? r.nome ?? '');
+        const name = String(r.nome ?? r.label ?? r.descrizione ?? r.nome_aula ?? code);
+        const cap = r.capienza ?? r.posti ?? r.capacity ?? null;
+        const bId = String(r.codice_sede ?? r.sede_id ?? r.id_sede ?? r.sede ?? fallbackBuilding?.id ?? 'default');
+        const bName = String(r.nome_sede ?? r.desc_sede ?? r.edificio ?? r.gruppo ?? r.sede_nome ?? fallbackBuilding?.name ?? 'Sede UniPD');
+
+        const nested = Array.isArray(r.celle) ? r.celle : Array.isArray(r.occupazioni) ? r.occupazioni : [];
+        const matchedCells = nested.length
+          ? nested
+          : cells.filter((c) => {
+              const cRoom = String(c.codice_aula ?? c.aula ?? c.id_aula ?? c.room ?? c.resourceId ?? '');
+              return cRoom === code || cRoom === name;
+            });
+
+        const busy = matchedCells
+          .map(extractInterval)
+          .filter(([s, e]) => s !== null && e !== null && e > s);
+
+        return { code, name, cap, busy, bId, bName };
+      });
+    }
+
     async function initMetadata() {
       setStatus('loading', 'Recupero elenco edifici UniPD...');
       showAlert(null);
+      state.directAllMode = false;
 
       try {
         const html = await workerFetch('/?view=rooms&include=rooms&_lang=it');
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        const selects = Array.from(doc.querySelectorAll('form select'));
-        const buildingSelect = selects.sort((a, b) => b.options.length - a.options.length)[0];
 
-        if (!buildingSelect) {
-          throw new Error('Risposta non valida dal Worker: verifica che lo script su Cloudflare sia stato pubblicato con Deploy.');
-        }
-
-        const form = buildingSelect.closest('form');
+        // Raccoglie campi base eventuali
         const baseFields = {};
-        form.querySelectorAll('input[name], select[name]').forEach((el) => {
+        doc.querySelectorAll('input[name], select[name]').forEach((el) => {
           if (el.name && el.type !== 'submit' && el.type !== 'button') {
             baseFields[el.name] = el.value;
           }
         });
-
         state.baseFields = baseFields;
         state.dateFieldName = Object.keys(baseFields).find((k) => /date|data/i.test(k)) || 'date';
-        state.buildingFieldName = buildingSelect.name || 'sede';
 
-        state.buildings = Array.from(buildingSelect.options)
-          .filter((o) => o.value && !/^(all|tutte|tutti|seleziona|-1|0)$/i.test(o.value.trim()))
-          .map((o) => ({ id: o.value, name: o.textContent.trim() }))
-          .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+        const isPlaceholder = (val, label) =>
+          !val ||
+          /^(all|tutte|tutti|seleziona|nessun.*|-1|0)$/i.test(val.trim()) ||
+          /^(seleziona|tutte le sedi|tutti gli edifici)/i.test(label.trim());
+
+        // Strategia 1: cerca in TUTTI i <select> della pagina (non solo dentro <form>)
+        const allSelects = Array.from(doc.querySelectorAll('select')).map((sel) => {
+          const validOpts = Array.from(sel.options)
+            .map((o) => ({ id: (o.value || '').trim(), name: o.textContent.trim() }))
+            .filter((o) => !isPlaceholder(o.id, o.name));
+          const isBuildingLike = /sede|edific|compless|polo|strutt/i.test(`${sel.name} ${sel.id}`);
+          return { sel, validOpts, isBuildingLike };
+        });
+
+        allSelects.sort((a, b) => {
+          if (a.isBuildingLike !== b.isBuildingLike) return a.isBuildingLike ? -1 : 1;
+          return b.validOpts.length - a.validOpts.length;
+        });
+
+        let buildings = [];
+        if (allSelects.length && allSelects[0].validOpts.length > 0) {
+          state.buildingFieldName = allSelects[0].sel.name || allSelects[0].sel.id || 'sede';
+          buildings = allSelects[0].validOpts;
+        }
+
+        // Strategia 2: cerca array JSON di sedi incorporati negli <script> della pagina
+        if (!buildings.length) {
+          const scriptText = Array.from(doc.querySelectorAll('script')).map((s) => s.textContent).join('\n');
+          const arrayMatches = scriptText.match(/\[\s*\{[^[\]]{20,}\}\s*\]/g) || [];
+          for (const rawArr of arrayMatches) {
+            try {
+              const parsed = JSON.parse(rawArr);
+              if (Array.isArray(parsed) && parsed.length > 3) {
+                const sample = parsed[0];
+                const idKey = ['codice', 'id', 'valore', 'value', 'cod_sede'].find((k) => k in sample);
+                const nameKey = ['nome', 'descrizione', 'label', 'testo', 'text', 'desc'].find((k) => k in sample);
+                if (idKey && nameKey) {
+                  buildings = parsed
+                    .map((item) => ({ id: String(item[idKey]).trim(), name: String(item[nameKey]).trim() }))
+                    .filter((o) => !isPlaceholder(o.id, o.name));
+                  if (buildings.length) break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Strategia 3: prova combo_call.php di EasyStaff
+        if (!buildings.length) {
+          for (const bodyStr of [
+            'sw=rooms_&page=rooms&_lang=it',
+            'vista=rooms&_lang=it',
+            'combo=sedi&_lang=it'
+          ]) {
+            try {
+              const comboRaw = await workerFetch('/combo_call.php', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                  'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: bodyStr
+              });
+              const comboJson = JSON.parse(comboRaw);
+              const list = Array.isArray(comboJson)
+                ? comboJson
+                : comboJson.sedi || comboJson.edifici || comboJson.results || [];
+              if (Array.isArray(list) && list.length) {
+                buildings = list
+                  .map((item) => ({
+                    id: String(item.codice ?? item.id ?? item.value ?? '').trim(),
+                    name: String(item.nome ?? item.descrizione ?? item.label ?? item.text ?? '').trim()
+                  }))
+                  .filter((o) => !isPlaceholder(o.id, o.name));
+                if (buildings.length) break;
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Strategia 4: interrogazione diretta globale a grid_call.php senza filtro sede
+        if (!buildings.length) {
+          const itToday = toItDate($('f-date').value);
+          const testRaw = await workerFetch('/grid_call.php', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: new URLSearchParams({
+              view: 'rooms',
+              include: 'rooms',
+              _lang: 'it',
+              date: itToday
+            }).toString()
+          });
+
+          const rooms = parseEasyStaffGrid(testRaw, null);
+          if (rooms.length) {
+            state.directAllMode = true;
+            const bMap = new Map();
+            for (const r of rooms) {
+              if (!bMap.has(r.bId)) bMap.set(r.bId, r.bName);
+            }
+            buildings = Array.from(bMap.entries()).map(([id, name]) => ({ id, name }));
+          }
+        }
+
+        if (!buildings.length) {
+          const debugSelects = allSelects
+            .map((s) => `<code>${esc(s.sel.id || s.sel.name || 'senza-nome')}</code> (${s.sel.options.length} opzioni)`)
+            .join(', ') || 'nessuno';
+          throw new Error(
+            `Nessun edificio estratto dalla pagina UniPD. Selettori trovati nell'HTML: ${debugSelects}.`
+          );
+        }
+
+        buildings.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+        state.buildings = buildings;
 
         const sel = $('f-building');
-        sel.innerHTML = `<option value="__ALL__">Tutti gli edifici (${state.buildings.length})</option>` +
-          state.buildings.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
+        sel.innerHTML = `<option value="__ALL__">Tutti gli edifici (${buildings.length})</option>` +
+          buildings.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
 
         return true;
       } catch (err) {
-        setStatus('error', 'Errore di connessione');
-        showAlert(`<strong>Attenzione:</strong> ${esc(err.message)}`);
+        setStatus('error', 'Errore lettura edifici');
+        showAlert(`<strong>Attenzione:</strong> ${err.message}`);
         return false;
       }
     }
@@ -597,31 +753,7 @@
         body: params.toString()
       });
 
-      const data = JSON.parse(rawText);
-      const rawRooms = Array.isArray(data.aule)
-        ? data.aule
-        : Object.values(data.aule || data.rows || {});
-      const cells = Array.isArray(data.celle) ? data.celle : [];
-
-      const rooms = rawRooms.map((r) => {
-        const code = String(r.codice ?? r.id ?? r.codice_aula ?? r.nome ?? '');
-        const name = String(r.nome ?? r.label ?? r.descrizione ?? code);
-        const cap = r.capienza ?? r.posti ?? null;
-
-        const busy = cells
-          .filter((c) => {
-            const cRoom = String(c.codice_aula ?? c.aula ?? c.id_aula ?? c.room ?? '');
-            return cRoom === code || cRoom === name;
-          })
-          .map((c) => [
-            toMin(c.ora_inizio ?? c.start ?? c.from),
-            toMin(c.ora_fine ?? c.end ?? c.to)
-          ])
-          .filter(([s, e]) => s !== null && e !== null);
-
-        return { code, name, cap, busy };
-      });
-
+      const rooms = parseEasyStaffGrid(rawText, building);
       return { ...building, rooms };
     }
 
@@ -634,12 +766,46 @@
       const isoDate = $('f-date').value;
       const itDate = toItDate(isoDate);
       const selectedId = $('f-building').value;
-      const targets = selectedId === '__ALL__'
-        ? state.buildings
-        : state.buildings.filter((b) => b.id === selectedId);
 
       state.loadedData = [];
       $('results').innerHTML = '';
+
+      if (state.directAllMode) {
+        setStatus('loading', `Caricamento aule per il ${itDate}...`);
+        try {
+          const rawText = await workerFetch('/grid_call.php', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: new URLSearchParams({
+              view: 'rooms',
+              include: 'rooms',
+              _lang: 'it',
+              date: itDate
+            }).toString()
+          });
+          const allRooms = parseEasyStaffGrid(rawText, null);
+          const grouped = new Map();
+          for (const r of allRooms) {
+            if (selectedId !== '__ALL__' && r.bId !== selectedId) continue;
+            if (!grouped.has(r.bId)) grouped.set(r.bId, { id: r.bId, name: r.bName, rooms: [] });
+            grouped.get(r.bId).rooms.push(r);
+          }
+          state.loadedData = Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name, 'it'));
+          setStatus('', `Aggiornato (${itDate})`);
+          render();
+        } catch (err) {
+          setStatus('error', 'Errore caricamento');
+          showAlert(`<strong>Attenzione:</strong> ${esc(err.message)}`);
+        }
+        return;
+      }
+
+      const targets = selectedId === '__ALL__'
+        ? state.buildings
+        : state.buildings.filter((b) => b.id === selectedId);
 
       const pWrap = $('progress-wrap');
       const pBar = $('progress-bar');
