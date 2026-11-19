@@ -434,7 +434,7 @@
   <div class="copyright-badge">© 2026 Myco Zennaro</div>
 
   <script>
-    // =========================================================================
+    // ========================================================================
     const WORKER_URL = 'https://proxypd.zennaro-myco.workers.dev/';
     // =========================================================================
 
@@ -548,68 +548,143 @@
       /^(all|tutte|tutti|seleziona|nessun.*|-1|0|null|undefined)$/i.test(String(val).trim()) ||
       /^(seleziona|tutte le sedi|tutti gli edifici|--)/i.test(String(label).trim());
 
-    function extractBuildingsFromResponse(rawText) {
-      const trimmed = (rawText || '').trim();
-      if (!trimmed) return [];
+    function parseOptionsHtml(htmlStr) {
+      const doc = new DOMParser().parseFromString(`<select>${htmlStr}</select>`, 'text/html');
+      return Array.from(doc.querySelectorAll('option'))
+        .map((o) => ({ id: (o.value || '').trim(), name: o.textContent.trim() }))
+        .filter((o) => !isPlaceholderOption(o.id, o.name));
+    }
 
-      // 1. Se la risposta contiene tag <option> HTML
-      if (trimmed.includes('<option')) {
-        const doc = new DOMParser().parseFromString(`<select>${trimmed}</select>`, 'text/html');
-        return Array.from(doc.querySelectorAll('option'))
-          .map((o) => ({ id: (o.value || '').trim(), name: o.textContent.trim() }))
-          .filter((o) => !isPlaceholderOption(o.id, o.name));
-      }
-
-      // 2. Se la risposta è JSON (EasyStaff usa chiavi come sede / rooms_sede con valore / etichetta)
-      const json = JSON.parse(trimmed);
-      const candidateArrays = [];
-
-      if (Array.isArray(json)) {
-        candidateArrays.push(json);
-      } else if (json && typeof json === 'object') {
-        const keys = Object.keys(json);
-        // Priorità alle chiavi che contengono sede/sedi/edifici
-        keys.sort((a, b) => {
-          const aMatch = /sede|sedi|edific|compless|polo/i.test(a) ? 0 : 1;
-          const bMatch = /sede|sedi|edific|compless|polo/i.test(b) ? 0 : 1;
-          return aMatch - bMatch;
-        });
-
-        for (const k of keys) {
-          if (Array.isArray(json[k])) {
-            candidateArrays.push(json[k]);
-          } else if (typeof json[k] === 'string' && json[k].includes('<option')) {
-            const doc = new DOMParser().parseFromString(`<select>${json[k]}</select>`, 'text/html');
-            const opts = Array.from(doc.querySelectorAll('option'))
-              .map((o) => ({ id: (o.value || '').trim(), name: o.textContent.trim() }))
-              .filter((o) => !isPlaceholderOption(o.id, o.name));
-            if (opts.length) return opts;
+    // Valuta risposte JS di EasyStaff (es. "var elenco_sedi = new Array(...);") in un contesto isolato
+    function evaluateEasyStaffJs(jsCode) {
+      const varNames = [
+        ...new Set(
+          Array.from(jsCode.matchAll(/\b(?:var|let|const)\s+([a-zA-Z_$][\w$]*)/g), (m) => m[1])
+        )
+      ];
+      const capturedHtml = [];
+      const noopChain = new Proxy(() => noopChain, {
+        get: (_, prop) => {
+          if (prop === 'html' || prop === 'append') {
+            return (val) => {
+              if (typeof val === 'string') capturedHtml.push(val);
+              else if (val && typeof val === 'object' && 'value' in val) {
+                capturedHtml.push(`<option value="${String(val.value)}">${String(val.text ?? '')}</option>`);
+              }
+              return noopChain;
+            };
           }
+          return noopChain;
+        },
+        apply: () => noopChain
+      });
+      const OptionStub = function (text, value) {
+        return { text, value };
+      };
+
+      const fn = new Function(
+        '$',
+        'jQuery',
+        'document',
+        'window',
+        'Option',
+        `${jsCode};\nreturn { ${varNames.join(', ')} };`
+      );
+      const vars = fn(noopChain, noopChain, noopChain, {}, OptionStub) || {};
+      return { vars, capturedHtml: capturedHtml.join('\n') };
+    }
+
+    function extractBuildingsFromStructure(dataObj) {
+      if (!dataObj || typeof dataObj !== 'object') return [];
+
+      const keys = Object.keys(dataObj).sort((a, b) => {
+        const aMatch = /sede|sedi|edific|compless|polo/i.test(a) ? 0 : 1;
+        const bMatch = /sede|sedi|edific|compless|polo/i.test(b) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+
+      const candidates = Array.isArray(dataObj) ? [dataObj] : keys.map((k) => dataObj[k]);
+
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+
+        if (typeof candidate === 'string' && candidate.includes('<option')) {
+          const opts = parseOptionsHtml(candidate);
+          if (opts.length) return opts;
         }
-      }
 
-      for (const arr of candidateArrays) {
-        if (!arr.length || typeof arr[0] !== 'object' || arr[0] === null) continue;
-        const sample = arr[0];
-        const idKey = ['valore', 'value', 'codice', 'id', 'cod_sede', 'sede', 'key'].find((k) => k in sample);
-        const nameKey = ['etichetta', 'label', 'nome', 'descrizione', 'text', 'desc', 'titolo', 'name'].find((k) => k in sample);
+        if (Array.isArray(candidate)) {
+          const items = candidate.filter((x) => x !== null && x !== undefined);
+          if (!items.length) continue;
 
-        if (idKey && nameKey) {
-          const parsed = arr
-            .map((item) => ({
-              id: String(item[idKey] ?? '').trim(),
-              name: String(item[nameKey] ?? '').trim()
-            }))
+          // Caso 1: Array di coppie [['E01', 'Complesso Paolotti'], ...] (tipico di new Array() EasyStaff)
+          if (Array.isArray(items[0]) && items[0].length >= 2) {
+            const parsed = items
+              .map((pair) => ({
+                id: String(pair[0] ?? '').trim(),
+                name: String(pair[1] ?? '').trim()
+              }))
+              .filter((o) => !isPlaceholderOption(o.id, o.name));
+            if (parsed.length) return parsed;
+          }
+
+          // Caso 2: Array di oggetti [{ valore: '...', etichetta: '...' }, ...]
+          if (typeof items[0] === 'object' && !Array.isArray(items[0])) {
+            const sample = items[0];
+            const idKey = ['valore', 'value', 'codice', 'id', 'cod_sede', 'sede', 'key'].find((k) => k in sample);
+            const nameKey = ['etichetta', 'label', 'nome', 'descrizione', 'text', 'desc', 'titolo', 'name'].find((k) => k in sample);
+            if (idKey && nameKey) {
+              const parsed = items
+                .map((item) => ({
+                  id: String(item[idKey] ?? '').trim(),
+                  name: String(item[nameKey] ?? '').trim()
+                }))
+                .filter((o) => !isPlaceholderOption(o.id, o.name));
+              if (parsed.length) return parsed;
+            }
+          }
+        } else if (typeof candidate === 'object') {
+          // Caso 3: Mappa chiave -> valore { 'E01': 'Complesso Paolotti', ... }
+          const entries = Object.entries(candidate)
+            .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
+            .map(([k, v]) => ({ id: String(k).trim(), name: String(v).trim() }))
             .filter((o) => !isPlaceholderOption(o.id, o.name));
-          if (parsed.length) return parsed;
+          if (entries.length) return entries;
         }
       }
 
       return [];
     }
 
+    function parseJsonOrJs(rawText) {
+      const trimmed = (rawText || '').trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        return JSON.parse(trimmed);
+      }
+      return evaluateEasyStaffJs(trimmed).vars;
+    }
+
+    function extractBuildingsFromResponse(rawText) {
+      const trimmed = (rawText || '').trim();
+      if (!trimmed) return [];
+
+      if (trimmed.includes('<option') && !/\bvar\s+/.test(trimmed)) {
+        return parseOptionsHtml(trimmed);
+      }
+
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        return extractBuildingsFromStructure(JSON.parse(trimmed));
+      }
+
+      const { vars, capturedHtml } = evaluateEasyStaffJs(trimmed);
+      const fromVars = extractBuildingsFromStructure(vars);
+      if (fromVars.length) return fromVars;
+      if (capturedHtml.includes('<option')) return parseOptionsHtml(capturedHtml);
+      return [];
+    }
+
     function parseEasyStaffGrid(rawText, fallbackBuilding) {
-      const data = JSON.parse(rawText);
+      const data = parseJsonOrJs(rawText);
       const rawRooms = Array.isArray(data.aule)
         ? data.aule
         : Array.isArray(data.rooms)
@@ -666,7 +741,6 @@
         const html = await workerFetch('/?view=rooms&include=rooms&_lang=it');
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
-        // Raccoglie campi input e variabili JS dalla pagina EasyStaff
         const baseFields = {};
         doc.querySelectorAll('input[name], select[name]').forEach((el) => {
           if (el.name && el.type !== 'submit' && el.type !== 'button' && el.value) {
@@ -686,7 +760,6 @@
         state.baseFields = baseFields;
         state.dateFieldName = Object.keys(baseFields).find((k) => /date|data/i.test(k)) || 'date';
 
-        // 1. Controlla se il select ha già opzioni popolate
         let buildings = [];
         if (sedeSelect) {
           buildings = Array.from(sedeSelect.options)
@@ -694,15 +767,13 @@
             .filter((o) => !isPlaceholderOption(o.id, o.name));
         }
 
-        // 2. Interroga combo_call.php con i parametri standard di EasyStaff (sw=rooms_)
         let lastComboDebug = '';
         if (!buildings.length) {
           const comboPayloads = [
             { ...baseFields, sw: 'rooms_', page: 'rooms', _lang: 'it' },
             { ...baseFields, sw: 'rooms_', view: 'rooms', include: 'rooms', _lang: 'it' },
             { ...baseFields, sw: 'rooms', page: 'rooms', _lang: 'it' },
-            { ...baseFields, vista: 'rooms', _lang: 'it' },
-            { ...baseFields, campo: 'sede', sw: 'rooms_', _lang: 'it' }
+            { ...baseFields, vista: 'rooms', _lang: 'it' }
           ];
 
           for (const payload of comboPayloads) {
@@ -715,16 +786,15 @@
                 },
                 body: new URLSearchParams(payload).toString()
               });
-              lastComboDebug = comboRaw.slice(0, 220);
+              lastComboDebug = comboRaw.slice(0, 260);
               buildings = extractBuildingsFromResponse(comboRaw);
               if (buildings.length) break;
             } catch (e) {
-              lastComboDebug = e.message;
+              lastComboDebug = `${e.message} | ${lastComboDebug}`;
             }
           }
         }
 
-        // 3. Fallback: interrogazione diretta globale a grid_call.php senza sede
         if (!buildings.length) {
           try {
             const itToday = toItDate($('f-date').value);
@@ -782,6 +852,7 @@
         view: 'rooms',
         include: 'rooms',
         _lang: 'it',
+        sede: building.id,
         [state.buildingFieldName]: building.id,
         [state.dateFieldName]: itDate
       });
