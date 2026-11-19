@@ -98,7 +98,7 @@
 
     .filters-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 14px;
       align-items: end;
     }
@@ -130,6 +130,33 @@
     }
 
     input:focus, select:focus { border-color: var(--accent); }
+
+    .date-row { display: flex; gap: 6px; }
+    .date-row input { flex: 1; min-width: 0; }
+
+    .btn-chip {
+      padding: 8px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      background: rgba(139, 92, 246, 0.14);
+      border-color: rgba(139, 92, 246, 0.35);
+      color: #ddd6fe;
+      white-space: nowrap;
+    }
+
+    .btn-chip:hover { background: rgba(139, 92, 246, 0.28); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #6d28d9);
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 9px 16px;
+      color: #fff;
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover { filter: brightness(1.1); }
 
     .secondary-bar {
       display: flex;
@@ -163,6 +190,22 @@
       height: 16px;
       accent-color: var(--accent);
       cursor: pointer;
+    }
+
+    .progress-wrap {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 18px;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.2s ease;
     }
 
     .building-card {
@@ -277,7 +320,19 @@
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 16px;
+      line-height: 1.55;
+    }
+
+    .alert-box {
+      background: rgba(225, 29, 72, 0.12);
+      border: 1px solid rgba(225, 29, 72, 0.35);
+      color: #fecdd3;
+      padding: 16px 18px;
+      border-radius: 14px;
+      margin-bottom: 18px;
+      font-size: 0.86rem;
       line-height: 1.5;
+      display: none;
     }
   </style>
 </head>
@@ -286,25 +341,31 @@
     <header>
       <div>
         <h1>Aule Libere UniPD</h1>
-        <div class="subtitle">Finestre libere durante la giornata divise per edificio</div>
+        <div class="subtitle">Finestre libere durante la giornata divise per edificio • Live tramite Cloudflare Worker</div>
       </div>
       <div class="badge-status">
         <span id="status-dot" class="dot loading"></span>
-        <span id="status-text">Caricamento dati...</span>
+        <span id="status-text">Inizializzazione...</span>
       </div>
     </header>
+
+    <div id="alert-box" class="alert-box"></div>
 
     <section class="panel">
       <div class="filters-grid">
         <div class="field">
           <label for="f-date">Giorno</label>
-          <select id="f-date"></select>
+          <div class="date-row">
+            <input id="f-date" type="date" />
+            <button type="button" class="btn-chip" id="btn-today">Oggi</button>
+            <button type="button" class="btn-chip" id="btn-tomorrow">Domani</button>
+          </div>
         </div>
 
         <div class="field">
           <label for="f-building">Edificio / Sede</label>
           <select id="f-building">
-            <option value="__ALL__">Tutti gli edifici</option>
+            <option value="__ALL__">Seleziona prima il Worker...</option>
           </select>
         </div>
 
@@ -334,18 +395,41 @@
           <input id="f-time" type="time" style="padding: 5px 9px; font-size: 0.84rem;" />
         </div>
 
-        <div id="summary-counter" style="color: var(--muted); font-size: 0.82rem;"></div>
+        <div class="toggle-group" style="flex: 1; justify-content: flex-end;">
+          <input
+            id="f-worker"
+            type="url"
+            placeholder="https://proxypd.<tuo-sottodominio>.workers.dev"
+            style="padding: 6px 10px; font-size: 0.82rem; min-width: 250px; flex: 1; max-width: 360px;"
+          />
+          <button type="button" class="btn-primary" id="btn-reload">Carica / Aggiorna</button>
+        </div>
       </div>
     </section>
+
+    <div id="progress-wrap" class="progress-wrap">
+      <div id="progress-bar" class="progress-bar"></div>
+    </div>
 
     <main id="results"></main>
   </div>
 
   <script>
+    // Opzionale: incolla qui l'URL del tuo Cloudflare Worker per averlo già precompilato ovunque
+    const DEFAULT_WORKER_URL = '';
+
+    const BASE_URL = 'https://agendastudentiunipd.easystaff.it';
+    const STORAGE_KEY = 'unipd_custom_worker_url';
     const DAY_START = 8 * 60;       // 08:00
     const DAY_END = 19 * 60 + 30;   // 19:30
 
-    let dataset = null;
+    const state = {
+      buildings: [],
+      baseFields: {},
+      dateFieldName: 'date',
+      buildingFieldName: 'sede',
+      loadedData: []
+    };
 
     const $ = (id) => document.getElementById(id);
 
@@ -353,7 +437,16 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
 
+    const toIsoDate = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const toItDate = (iso) => {
+      const [y, m, d] = iso.split('-');
+      return `${d}-${m}-${y}`;
+    };
+
     const toMin = (t) => {
+      if (typeof t === 'number') return t;
       const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
       return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
     };
@@ -361,26 +454,54 @@
     const fromMin = (m) =>
       `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
-    const formatItalianDay = (isoDate) => {
-      const [y, m, d] = isoDate.split('-').map(Number);
-      const dt = new Date(y, m - 1, d);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffDays = Math.round((dt - today) / 86400000);
-
-      const label = dt.toLocaleDateString('it-IT', {
-        weekday: 'long',
-        day: '2-digit',
-        month: 'long'
-      });
-      const capLabel = label.charAt(0).toUpperCase() + label.slice(1);
-      if (diffDays === 0) return `Oggi • ${capLabel}`;
-      if (diffDays === 1) return `Domani • ${capLabel}`;
-      return capLabel;
+    const setStatus = (type, text) => {
+      $('status-dot').className = `dot ${type}`;
+      $('status-text').textContent = text;
     };
 
+    function showAlert(html) {
+      const box = $('alert-box');
+      if (!html) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+      } else {
+        box.style.display = 'block';
+        box.innerHTML = html;
+      }
+    }
+
+    function getWorkerUrl() {
+      let val = $('f-worker').value.trim().replace(/\/+$/, '');
+      if (val && !/^https?:\/\//i.test(val)) {
+        val = 'https://' + val;
+        $('f-worker').value = val;
+      }
+      return val;
+    }
+
+    async function workerFetch(pathAndQuery, options = {}) {
+      const workerBase = getWorkerUrl();
+      if (!workerBase) {
+        throw new Error('Inserisci l’URL del tuo Cloudflare Worker (es. https://proxypd....workers.dev) nel campo in alto.');
+      }
+
+      const targetUrl = `${BASE_URL}${pathAndQuery}`;
+      const proxyUrl = `${workerBase}/?url=${encodeURIComponent(targetUrl)}`;
+
+      const res = await fetch(proxyUrl, {
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        body: options.method === 'POST' ? options.body : undefined
+      });
+
+      if (!res.ok) {
+        throw new Error(`Errore Worker HTTP ${res.status}`);
+      }
+      return await res.text();
+    }
+
     function computeFreeSlots(busyIntervals, minGap) {
-      const clamped = (busyIntervals || [])
+      const clamped = busyIntervals
         .map(([s, e]) => [Math.max(DAY_START, s), Math.min(DAY_END, e)])
         .filter(([s, e]) => e > s)
         .sort((a, b) => a[0] - b[0]);
@@ -404,27 +525,159 @@
       return free;
     }
 
-    function render() {
-      if (!dataset) return;
+    async function initMetadata() {
+      setStatus('loading', 'Recupero elenco edifici UniPD...');
+      showAlert(null);
 
-      const selectedDate = $('f-date').value;
-      const selectedBuilding = $('f-building').value;
+      try {
+        const html = await workerFetch('/?view=rooms&include=rooms&_lang=it');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const selects = Array.from(doc.querySelectorAll('form select'));
+        const buildingSelect = selects.sort((a, b) => b.options.length - a.options.length)[0];
+
+        if (!buildingSelect) {
+          throw new Error('Risposta non valida dal Worker: verifica che lo script su Cloudflare sia stato salvato con Deploy.');
+        }
+
+        const form = buildingSelect.closest('form');
+        const baseFields = {};
+        form.querySelectorAll('input[name], select[name]').forEach((el) => {
+          if (el.name && el.type !== 'submit' && el.type !== 'button') {
+            baseFields[el.name] = el.value;
+          }
+        });
+
+        state.baseFields = baseFields;
+        state.dateFieldName = Object.keys(baseFields).find((k) => /date|data/i.test(k)) || 'date';
+        state.buildingFieldName = buildingSelect.name || 'sede';
+
+        state.buildings = Array.from(buildingSelect.options)
+          .filter((o) => o.value && !/^(all|tutte|tutti|seleziona|-1|0)$/i.test(o.value.trim()))
+          .map((o) => ({ id: o.value, name: o.textContent.trim() }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+
+        const sel = $('f-building');
+        sel.innerHTML = `<option value="__ALL__">Tutti gli edifici (${state.buildings.length})</option>` +
+          state.buildings.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
+
+        return true;
+      } catch (err) {
+        setStatus('error', 'Worker non configurato o non raggiungibile');
+        showAlert(`<strong>Attenzione:</strong> ${esc(err.message)}`);
+        return false;
+      }
+    }
+
+    async function fetchBuildingSchedule(building, itDate) {
+      const params = new URLSearchParams({
+        ...state.baseFields,
+        view: 'rooms',
+        include: 'rooms',
+        _lang: 'it',
+        [state.buildingFieldName]: building.id,
+        [state.dateFieldName]: itDate
+      });
+
+      const rawText = await workerFetch('/grid_call.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: params.toString()
+      });
+
+      const data = JSON.parse(rawText);
+      const rawRooms = Array.isArray(data.aule)
+        ? data.aule
+        : Object.values(data.aule || data.rows || {});
+      const cells = Array.isArray(data.celle) ? data.celle : [];
+
+      const rooms = rawRooms.map((r) => {
+        const code = String(r.codice ?? r.id ?? r.codice_aula ?? r.nome ?? '');
+        const name = String(r.nome ?? r.label ?? r.descrizione ?? code);
+        const cap = r.capienza ?? r.posti ?? null;
+
+        const busy = cells
+          .filter((c) => {
+            const cRoom = String(c.codice_aula ?? c.aula ?? c.id_aula ?? c.room ?? '');
+            return cRoom === code || cRoom === name;
+          })
+          .map((c) => [
+            toMin(c.ora_inizio ?? c.start ?? c.from),
+            toMin(c.ora_fine ?? c.end ?? c.to)
+          ])
+          .filter(([s, e]) => s !== null && e !== null);
+
+        return { code, name, cap, busy };
+      });
+
+      return { ...building, rooms };
+    }
+
+    async function loadSchedule() {
+      const workerVal = getWorkerUrl();
+      if (workerVal) {
+        localStorage.setItem(STORAGE_KEY, workerVal);
+      } else {
+        setStatus('error', 'In attesa dell’URL Worker');
+        $('results').innerHTML = `
+          <div class="empty-state">
+            Incolla l'URL del tuo Cloudflare Worker (es. <code>https://proxypd.&lt;tuo-nome&gt;.workers.dev</code>) nel campo qui sopra e clicca <strong>Carica / Aggiorna</strong>.
+          </div>`;
+        return;
+      }
+
+      if (!state.buildings.length) {
+        const ok = await initMetadata();
+        if (!ok) return;
+      }
+
+      const isoDate = $('f-date').value;
+      const itDate = toItDate(isoDate);
+      const selectedId = $('f-building').value;
+      const targets = selectedId === '__ALL__'
+        ? state.buildings
+        : state.buildings.filter((b) => b.id === selectedId);
+
+      state.loadedData = [];
+      $('results').innerHTML = '';
+
+      const pWrap = $('progress-wrap');
+      const pBar = $('progress-bar');
+      pWrap.style.display = 'block';
+      pBar.style.width = '5%';
+
+      const BATCH_SIZE = 6;
+      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+        const chunk = targets.slice(i, i + BATCH_SIZE);
+        setStatus('loading', `Analisi edifici: ${Math.min(i + BATCH_SIZE, targets.length)} / ${targets.length}...`);
+
+        const results = await Promise.all(
+          chunk.map((b) => fetchBuildingSchedule(b, itDate).catch(() => ({ ...b, rooms: [] })))
+        );
+
+        state.loadedData.push(...results);
+        pBar.style.width = `${Math.round(((i + chunk.length) / targets.length) * 100)}%`;
+        render();
+      }
+
+      setTimeout(() => { pWrap.style.display = 'none'; }, 300);
+      setStatus('', `Aggiornato (${itDate})`);
+      render();
+    }
+
+    function render() {
       const query = $('f-search').value.trim().toLowerCase();
       const minGap = parseInt($('f-mingap').value, 10) || 30;
       const onlyAtTime = $('f-only-time').checked;
       const targetMin = toMin($('f-time').value);
       const totalSpan = DAY_END - DAY_START;
 
-      const daySchedule = dataset.schedule[selectedDate] || {};
-      let totalFreeRooms = 0;
-
-      const filteredBuildings = dataset.buildings
-        .filter((b) => selectedBuilding === '__ALL__' || b.id === selectedBuilding)
+      const filteredBuildings = state.loadedData
         .map((b) => {
           const buildingMatch = !query || b.name.toLowerCase().includes(query);
-          const rooms = daySchedule[b.id] || [];
-
-          const freeRooms = rooms
+          const freeRooms = b.rooms
             .map((r) => {
               const slots = computeFreeSlots(r.busy, minGap);
               const activeSlot = targetMin !== null
@@ -439,19 +692,15 @@
               return true;
             });
 
-          totalFreeRooms += freeRooms.length;
           return { ...b, freeRooms };
         })
         .filter((b) => b.freeRooms.length > 0);
-
-      $('summary-counter').textContent =
-        `${totalFreeRooms} ${totalFreeRooms === 1 ? 'aula libera' : 'aule libere'} in ${filteredBuildings.length} ${filteredBuildings.length === 1 ? 'edificio' : 'edifici'}`;
 
       if (!filteredBuildings.length) {
         $('results').innerHTML = `
           <div class="empty-state">
             Nessuna aula libera trovata per i filtri impostati.<br>
-            <span style="font-size:0.82rem;">Prova a ridurre la durata minima dello slot o a cambiare edificio.</span>
+            <span style="font-size:0.82rem;">Prova a ridurre la durata minima o a deselezionare il filtro sull'orario singolo.</span>
           </div>`;
         return;
       }
@@ -496,41 +745,29 @@
       `).join('');
     }
 
-    async function init() {
-      const now = new Date();
-      $('f-time').value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const savedWorker = localStorage.getItem(STORAGE_KEY) || DEFAULT_WORKER_URL;
+    if (savedWorker) $('f-worker').value = savedWorker;
 
-      try {
-        const res = await fetch(`./aule.json?t=${Date.now()}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        dataset = await res.json();
+    const now = new Date();
+    $('f-date').value = toIsoDate(now);
+    $('f-time').value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-        $('status-dot').className = 'dot';
-        $('status-text').textContent = `Aggiornato al ${dataset.generated_at}`;
+    $('btn-today').onclick = () => {
+      $('f-date').value = toIsoDate(new Date());
+      loadSchedule();
+    };
 
-        const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        $('f-date').innerHTML = dataset.dates
-          .map((d) => `<option value="${esc(d)}" ${d === todayIso ? 'selected' : ''}>${esc(formatItalianDay(d))}</option>`)
-          .join('');
+    $('btn-tomorrow').onclick = () => {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      $('f-date').value = toIsoDate(t);
+      loadSchedule();
+    };
 
-        $('f-building').innerHTML =
-          `<option value="__ALL__">Tutti gli edifici (${dataset.buildings.length})</option>` +
-          dataset.buildings.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
+    $('f-date').onchange = loadSchedule;
+    $('f-building').onchange = loadSchedule;
+    $('btn-reload').onclick = () => { state.buildings = []; loadSchedule(); };
 
-        render();
-      } catch (err) {
-        $('status-dot').className = 'dot error';
-        $('status-text').textContent = 'File aule.json non ancora pronto';
-        $('results').innerHTML = `
-          <div class="empty-state">
-            <strong>Il file <code>aule.json</code> non è ancora stato generato.</strong><br>
-            Vai nella scheda <strong>Actions</strong> del tuo repository GitHub, verifica che il workflow <em>Aggiorna Aule Libere UniPD</em> abbia completato la prima esecuzione (richiede ~15 secondi) e ricarica questa pagina.
-          </div>`;
-      }
-    }
-
-    $('f-date').onchange = render;
-    $('f-building').onchange = render;
     $('f-search').oninput = render;
     $('f-mingap').onchange = render;
     $('f-only-time').onchange = render;
@@ -538,7 +775,7 @@
       if ($('f-only-time').checked) render();
     };
 
-    init();
+    loadSchedule();
   </script>
 </body>
 </html>
